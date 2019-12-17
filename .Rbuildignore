@@ -1,2 +1,4 @@
 ^data-raw$
 ^docs$
+^\.travis\.yml$
+^appveyor\.yml$
