@@ -1,0 +1,77 @@
+---
+title: "LDA-Tuning for UNGA"
+author: "Christoph Leonhardt"
+date: "24 January 2019"
+output: rmarkdown::html_vignette
+params:
+  corpus: "UNGA"
+
+---
+
+```{r starting_time}
+starting_time <- Sys.time()
+```
+
+
+
+```{r}
+library(ldatuning)
+library(polmineR)
+```
+
+```{r setup}
+corpus <- "UNGA"
+language <- "en"
+dtm <- readRDS("/home/leonhardt/lab/gitlab/UNGA_Auswertungen/dtm_files/dtm_UNGA_word.Rdata")
+dim(dtm)
+```
+
+```{r remove_noise}
+# minimum document length 100 words
+docs_to_drop_length <- which(slam::row_sums(dtm) < 100) # less than 100
+if (length(docs_to_drop_length) > 0) dtm <- dtm[-docs_to_drop_length,]
+
+# remove noisy words
+noise_to_drop <- noise(colnames(dtm), specialChars = NULL, stopwordsLanguage = language)
+customStopwords <- c("dass", "werden")
+noise_to_drop[["stopwords"]] <- c(
+  noise_to_drop[["stopwords"]],
+  customStopwords,
+  paste(
+    toupper(substr(noise_to_drop[["stopwords"]], 1, 1)),
+    substr(noise_to_drop[["stopwords"]], 2, nchar(noise_to_drop[["stopwords"]])),
+    sep = ""
+  )
+  )
+dtm <- dtm[,-which(colnames(dtm) %in% unique(unname(unlist(noise_to_drop))))]
+
+# remove rare words
+terms_to_drop_rare <- which(slam::col_sums(dtm) <= 10)
+if (length(terms_to_drop_rare) > 0) dtm <- dtm[,-terms_to_drop_rare]
+
+# remove documents that are empty now
+empty_docs <- which(slam::row_sums(dtm) == 0)
+if (length(empty_docs) > 0) dtm <- dtm[-empty_docs,]
+
+dim(dtm)
+```
+
+```{r}
+tunes <- FindTopicsNumber(
+   dtm,
+   topics = c(1:10 * 10, 120, 140, 160, 180, 0:3 * 50 + 200, 400),
+   metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010"),
+   method = "Gibbs",
+   control = list(seed = 77),
+   mc.cores = 6L,
+   verbose = TRUE
+)
+
+
+FindTopicsNumber_plot(tunes)
+```
+
+```{r finished}
+Sys.time() - starting_time
+```
+

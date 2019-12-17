@@ -1,0 +1,284 @@
+---
+title: "UNGA - From TEI to CWB with linguistic annotation"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{MigParl - From XML to CWB}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+params:
+  corpus: "UNGA"
+  no_cores: 1
+---
+
+```{r starting_time}
+starting_time <- Sys.time()
+```
+
+## Introduction
+
+This is a template for encoding projects for corpora of plenary protocols (TEI input format). The project is configured in the following section, the following procedure is generic.
+
+The Rmarkdown document can be executed by using `Rscript` from a terminal. The corpus will be prepared when preparing the output html document, which is a reproducible documentation of the annotation and indexing procedure.
+
+```{sh command_line_use, eval = FALSE}
+Rscript -e 'rmarkdown::render(input = "01_UNGA_tei_to_cwb.Rmd", output_format = "html_document", output_file = "01_UNGA_tei_to_cwb.html")'
+```
+
+## Configure the encoding project
+
+### The corpus to process
+
+```{r define_corpus}
+corpus <- params$corpus
+```
+
+### Files to be processed
+
+```{r get_files_to_process}
+
+teidir <- "./tei"
+dir.exists(teidir)
+teifiles <- Sys.glob(file.path(teidir, "*.xml"))
+length(teifiles)
+```
+
+For trial runs, set a number of sample documents that will be drawn from all TEI files. To process all documents, comment out the line.
+
+```{r subset_of_files}
+if (exists("teisample")) teifiles <- sample(teifiles, size = teisample)
+length(teifiles)
+```
+
+
+### Multicore
+
+Number of cores to use for running annotators.
+
+```{r no_of_cores}
+no_cores <- as.integer(params$no_cores)
+```
+
+
+### Stanford CoreNLP configuration
+
+Define properties file used to configure Stanford CoreNLP.
+
+```{r get_properties_file}
+language <- "en"
+properties_file <- system.file(package = "bignlp",
+            "extdata", "properties_files",
+            "StanfordCoreNLP_en.properties"
+            )
+properties_file
+```
+
+```{r install_corenlp_if_necessary}
+if (bignlp::corenlp_get_jar_dir() == "") bignlp::corenlp_install(lang = language)
+```
+
+### CWB input required
+
+```{r define_p_attributes}
+p_attrs <- c("word", "pos", "lemma", "ner")
+```
+
+We get the registry directory and remove the registry file for the newly encoded corpus, if it already exists. 
+
+```{r registry_directory}
+library(polmineR)
+registry <- Sys.getenv("CORPUS_REGISTRY")
+if (!file.exists(registry)) stop("environment variable CORPUS_REGISTRY needs to be defined")
+stateparl_registry_file <- file.path(registry, tolower(corpus))
+if (file.exists(stateparl_registry_file)) file.remove(stateparl_registry_file)
+```
+
+We create a project-specific data directory within the data directory and make sure it is empty.
+  
+```{r data_directory}
+data_dir <- file.path(dirname(registry), "indexed_corpora")
+if (!file.exists(data_dir)) dir.create(data_dir)
+stateparl_data_dir <- file.path(data_dir, tolower(corpus))
+if (!file.exists(stateparl_data_dir)) dir.create(stateparl_data_dir)
+file.remove(list.files(stateparl_data_dir, full.names = TRUE))
+```
+
+
+
+## Preparatory steps
+
+### Load required packages
+
+```{r load_libraries}
+library(data.table)
+library(magrittr)
+library(cwbtools)
+library(bignlp)
+```
+
+```{r java_options}
+options(java.parameters = "-Xmx4g") # needs to be set before a JVM is initialized.
+options(bignlp.properties_file = properties_file)
+```
+
+### Meet installation requirements
+
+```{r install_cwb}
+if (!cwb_is_installed()) cwb_install()
+```
+
+### The directory and files for the NLP pipe
+
+```{r tempfiles}
+tmpdir <- tempdir()
+if (.Platform$OS.type == "windows") tmpdir <- normalizePath(tmpdir, winslash = "/")
+
+nlp_dir <- file.path(tmpdir, "nlp_dir")
+if (!file.exists(nlp_dir)) dir.create(nlp_dir)
+
+chunkdata_file <- file.path(nlp_dir, paste(tolower(corpus), "tsv", sep = "."))
+ndjson_file <- file.path(nlp_dir, paste(tolower(corpus), "ndjson", sep = "."))
+tsv_file_tagged <- file.path(nlp_dir, paste(tolower(corpus), "tagged.tsv", sep = "_"))
+```
+
+```{r check_file_exist}
+if (file.exists(chunkdata_file)) file.remove(chunkdata_file)
+if (file.exists(ndjson_file)) file.remove(ndjson_file)
+if (file.exists(tsv_file_tagged)) file.remove(tsv_file_tagged)
+```
+
+
+## From XML to CWB
+
+### Initialize CorpusData class
+
+```{r initialize_corpus_data}
+CD <- CorpusData$new()
+
+metadata <- c(
+  unga_session = "//legislativePeriod", unga_meeting = "//titleStmt/sessionNo",
+  date = "//publicationStmt/date", url = "//sourceDesc/url",
+  src = "//sourceDesc/filetype"
+)
+```
+
+### Read in data
+
+```{r read_xml_files}
+CD$import_xml(filenames = teifiles, meta = metadata, progress = interactive())
+CD
+```
+
+### Rework metadata table
+
+The TEI files include an element "speaker" that is redundant and can (and should be) dropped.
+
+```{r remove_speaker_element}
+to_keep <- which(is.na(CD$metadata[["speaker"]]))
+CD$chunktable <- CD$chunktable[to_keep]
+CD$metadata <- CD$metadata[to_keep][, speaker := NULL]
+```
+
+```{r adjust_colnames}
+setnames(CD$metadata, old = c("sp_who", "sp_state", "sp_role", "div_n", "div_what"), new = c("speaker", "state_organization", "role", "agenda_item", "agenda_item_type"))
+```
+
+```{r add_year}
+CD$metadata[, year := gsub("^(\\d{4})-\\d{2}-\\d+$", "\\1", CD$metadata[["date"]])]
+```
+
+
+### Linguistic annotation
+
+```{r write_chunktable_to_disk}
+fwrite(x = CD$chunktable, file = chunkdata_file, sep = "\t", na = "NA")
+```
+
+
+```{r annotate_and_parse}
+departure_time <- Sys.time()
+
+# if we do not specify output files for the annotator temporary files will be stored in the tempdir(). These files can become rather large. We change the target location here.
+
+CD$tokenstream <-  chunk_table_split(chunkdata_file, output = NULL, n = no_cores, verbose = TRUE) %>%
+  corenlp_annotate(threads = no_cores, byline = TRUE, progress = interactive()) %>%
+  corenlp_parse_ndjson(cols_to_keep = c("id", p_attrs), output = tsv_file_tagged, threads = no_cores, progress = interactive()) %>%
+  lapply(fread) %>%
+  rbindlist()
+
+Sys.time() - departure_time
+```
+
+
+
+
+# Undo some odd parantheses conversion performed by CoreNLP
+
+```{r remove_parentheses_artefacts}
+# CoreNLP annotation turns round/square/curly brackets into acronyms - redo that here.
+
+wordSubs <- list(
+  c("-LRB-", "("),
+  c("-RRB-", ")"),
+  c("-LSB-", "["),
+  c("-RSB-", "]"),
+  c("-RCB-", "}"), 
+  c("-LCB-", "{")
+  )
+
+for (i in 1:length(wordSubs)){
+  if (interactive()) message("... replacement: ", i)
+  CD$tokenstream[, word := gsub(wordSubs[[i]][1], wordSubs[[i]][2], CD$tokenstream[["word"]])]
+}
+
+```
+
+
+```{r add_corpus_positions}
+CD$add_corpus_positions()
+CD$metadata$id <- as.character(CD$metadata$id)
+```
+
+
+```{r save_tokenstream}
+fwrite(CD$tokenstream, file = "/Users/christoph/lab/tmp/tokenstream.csv")
+```
+
+
+## Lemmatization - Taken from ctk.
+
+Sourcing a simple R-Script. The proper way would be to set a method for the R6 Object ("CD").
+
+```{r lemmatize, eval = FALSE}
+ if (Sys.getenv("LOGNAME") == "christoph") Sys.setenv(TREETAGGER_PATH = "/opt/treetagger") 
+ if (Sys.getenv("LOGNAME") == "leonhardt") Sys.setenv(TREETAGGER_PATH = "/home/leonhardt/lab/treetagger") 
+
+source("migparl_add_treetagger_lemmatization.R")
+add_treetagger_lemmatization()
+```
+
+
+```{r attributes_to_encode}
+s_attrs <- c("id", "speaker", "state_organization", "role", "unga_session", "unga_meeting", "date", "year")
+
+p_attrs <- c("word", "pos", "lemma", "ner")
+```
+
+```{r encode}
+CD$encode(
+  registry_dir = registry, data_dir = stateparl_data_dir,
+  corpus = toupper(corpus), encoding = "utf8", method = "CWB",
+  p_attributes = p_attrs, s_attributes = s_attrs,
+  compress = TRUE
+)
+```
+
+```{r creating_tarball}
+tarfile <- sprintf("/Users/christoph/lab/tmp/%s.tar.gz", corpus)
+
+cwbtools::corpus_as_tarball(corpus = corpus, registry_dir = Sys.getenv("CORPUS_REGISTRY"), tarfile = tarfile)
+```
+
+```{r finished}
+Sys.time() - starting_time
+```

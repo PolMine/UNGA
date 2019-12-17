@@ -1,0 +1,139 @@
+---
+title: "Create LDA Topic Model"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Create LDA Topic Model}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+params:
+  package: "UNGA"
+  corpus: "UNGA"
+  k: 180
+  language: "en"
+---
+
+
+```{r starting_time}
+starting_time <- Sys.time()
+```
+
+
+```{sh command_line_use, eval = FALSE}
+Rscript -e 'rmarkdown::render(input = "01_CWB_to_LDA.Rmd", output_format = "html_document", output_file = "lda_report/cwb_to_lda_unga.html", params = list(package = "UNGA", corpus = "UNGA", k = 180, language = "en"))'
+```
+
+
+````{r}
+package_to_use <- params$package
+corpus <- toupper(params$corpus)
+k <- as.integer(params$k)
+language <- params$language
+```
+
+```{r}
+message(sprintf("Package to use: %s", package_to_use))
+message(sprintf("Corpus to use: %s", corpus))
+message(sprintf("Number of topics (k): %s", k))
+
+get_corpus_build_date <- function(package, corpus) {
+  firstline <- readLines(paste0(system.file(package = package, "extdata", "cwb", "indexed_corpora", tolower(corpus)), "/info.md"))[1]
+  date <- gsub(".*build (.*?)\\)", "\\1", firstline)
+  date <- as.Date(date)
+  return(date)
+}
+
+corpus_build_date <- get_corpus_build_date(package = package_to_use, corpus = corpus)
+if (!inherits(corpus_build_date, "Date")) corpus_build_date <- "YYYY-MM-DD"
+
+lda_filename <- sprintf("lda_%s_%s_%s_%s.rds", corpus, corpus_build_date, k, Sys.Date())
+
+message("LDA model will be written to: ", lda_filename)
+```
+
+
+# Load libraries
+
+```{r}
+library(polmineR)
+library(data.table)
+library(pbapply)
+library(topicmodels)
+```
+
+# Activate Corpus Package
+
+```{r}
+use(package_to_use)
+```
+
+# Preventing Encoding Issues
+
+```{r, eval = FALSE}
+
+if (.Platform$OS.type == "unix" && polmineR::registry_get_encoding(corpus) == "latin1") {
+  
+  cwbtools::corpus_recode(corpus = corpus, 
+                          registry_dir = system.file(package = package_to_use, "extdata", "cwb", "registry"),
+                          data_dir = system.file(package = package_to_use, "extdata", 
+                                                 "cwb", "indexed_corpora", tolower(corpus)),
+                          to = "utf8")
+  
+  RcppCWB::cqp_reset_registry()
+  use(package_to_use)
+
+}
+```
+
+# Get going
+
+```{r}
+sp <- as.speeches(corpus, s_attribute_name = "speaker")
+dtm <- as.DocumentTermMatrix(sp, p_attribute = "word") 
+```
+
+
+```{r}
+# minimum document length 100 words
+docs_to_drop_length <- which(slam::row_sums(dtm) < 100) # less than 100
+if (length(docs_to_drop_length) > 0) dtm <- dtm[-docs_to_drop_length,]
+
+# remove noisy words
+noise_to_drop <- noise(colnames(dtm), specialChars = NULL, stopwordsLanguage = language)
+custom_stopwords <- c("dass", "worden", "Beifall", "Herr", "Frau", "Damen", "Herren")
+noise_to_drop[["stopwords"]] <- c(
+  noise_to_drop[["stopwords"]],
+  paste(
+    toupper(substr(noise_to_drop[["stopwords"]], 1, 1)),
+    substr(noise_to_drop[["stopwords"]], 2, nchar(noise_to_drop[["stopwords"]])),
+    sep = ""
+  ), 
+custom_stopwords
+)
+
+dtm <- dtm[,-which(colnames(dtm) %in% unique(unname(unlist(noise_to_drop))))]
+
+# remove rare words
+terms_to_drop_rare <- which(slam::col_sums(dtm) <= 10)
+if (length(terms_to_drop_rare) > 0) dtm <- dtm[,-terms_to_drop_rare]
+
+# remove documents that are empty now
+empty_docs <- which(slam::row_sums(dtm) == 0)
+if (length(empty_docs) > 0) dtm <- dtm[-empty_docs,]
+```
+
+```{r}
+lda <- LDA(
+  dtm, k = k, method = "Gibbs",
+  control = list(burnin = 1000, iter = 3L, keep = 50, verbose = TRUE)
+)
+```
+
+```{r}
+saveRDS(object = lda, file = lda_filename)
+```
+
+```{r finished}
+Sys.time() - starting_time
+```
+

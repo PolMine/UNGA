@@ -1,0 +1,149 @@
+---
+title: "United Nations General Assembly Corpus Data Report"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{State Parliament Corpus Data Report}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+---
+
+
+
+## Introduction
+
+This document is parametrized and can be generated from the command line, passing the corpus to report on as a parameter, as follows.
+
+```{sh command_line_use, eval = FALSE}
+Rscript -e 'rmarkdown::render(input = "data_report_template.Rmd", output_format = "html_document", output_file = "data_report_be.html", params = list(target = "BE"))'
+```
+
+
+## Getting Started
+
+```{r}
+library(data.table)
+```
+
+
+```{r}
+target <- "UNGA"
+print(target)
+```
+
+```{r}
+library(polmineR)
+use("UNGA")
+```
+
+
+## Structural and Positional Attributes
+
+```{r}
+p_attributes(target)
+```
+
+```{r}
+s_attributes(target)
+```
+
+
+## Report on Structural Attributes
+
+### Structural Attribute "date" (and year)
+
+There is one missing date value in the data. We remove it from the date vector for niver output.
+
+```{r}
+dates <- s_attributes(target, "date")
+dates <- dates[which(dates != "NA")]
+dates <- as.Date(dates)
+min(dates)
+max(dates)
+```
+
+```{r}
+dt_date <- size(target, s_attribute = "date")
+dt_date[, "date" := as.Date(dt_date[["date"]])]
+setorderv(dt_date, "date")
+DT::datatable(dt_date)
+```
+
+```{r}
+dt_date[, "year" := format(dt_date[["date"]], "%Y")]
+dt_year <- dt_date[, sum(.SD[["size"]]), by = "year"]
+setnames(dt_year, old = "V1", new = "size")
+DT::datatable(dt_year)
+```
+
+```{r}
+barplot(
+  height = dt_year[["size"]],
+  names.arg = dt_year[["year"]],
+  las = 2,
+  main = sprintf("Token per year (%s)", target)
+  )
+```
+
+### Structural Attribute "lp"
+
+Actually, the United Nations General Assembly doesn't have legislative periods but sessions which start in September and last one year. The individual meetings, which we call sessions in the PolMine jargon, are called meetings.
+
+```{r}
+dt_lp <- size(target, s_attribute = "lp")
+DT::datatable(dt_lp)
+```
+
+```{r}
+barplot(height = dt_lp[["size"]], names.arg = dt_lp[["lp"]])
+```
+
+
+### Structural Attribute "session"
+
+As described above, the structural attribute **session** refers to the individual meetings. 
+
+```{r}
+dt <- rbindlist(
+  lapply(
+    s_attributes(target, "lp"),
+    function(lp){
+      size(
+        partition(target, lp = lp, verbose = FALSE),
+        s_attribute = "session"
+      )[, "lp" := lp]
+    }
+  )
+)
+dt[, "lp" := as.integer(dt[["lp"]])][, "session" := as.integer(dt[["session"]])]
+setcolorder(dt, neworder = c("lp", "session", "size"))
+setorderv(dt, cols = c("lp", "session"))
+DT::datatable(dt)
+```
+
+
+### Structural Attribute "state" 
+
+The attribute **state** describes both states and organizations. 
+
+```{r}
+DT::datatable(as.data.frame(size(target, s_attribute = "state")))
+```
+
+
+### Structural Attribute "role"
+
+**role** describes a multitude of roles and some non-descriptive titles such as "Mr.".
+
+```{r}
+dt_role <- size(target, s_attribute = "role")
+DT::datatable(dt_role)
+```
+
+
+### Structural Attribute "speaker"
+
+```{r}
+DT::datatable(size(target, s_attribute = "speaker"))
+```
+

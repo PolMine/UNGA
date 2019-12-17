@@ -1,0 +1,39 @@
+##
+## registry entry for corpus UNGAMINI
+##
+
+# long descriptive name for the corpus
+NAME "UNGAMINI"
+# corpus ID (must be lowercase in registry!)
+ID   ungamini
+# path to binary data files
+HOME /Users/christoph/Library/R/3.5/library/UNGA/extdata/cwb/indexed_corpora/ungamini
+# optional info file (displayed by ",info;" command in CQP)
+INFO /Users/christoph/Library/R/3.5/library/UNGA/extdata/cwb/indexed_corpora/ungamini/.info
+
+# corpus properties provide additional information about the corpus:
+##:: charset = "utf8"
+#========================================================================#
+
+
+##
+## p-attributes (token annotations)
+##
+
+ATTRIBUTE word
+ATTRIBUTE pos
+ATTRIBUTE lemma
+ATTRIBUTE ner
+
+##
+## s-attributes
+##
+
+STRUCTURE id
+STRUCTURE speaker
+STRUCTURE state_organization
+STRUCTURE role
+STRUCTURE unga_session
+STRUCTURE unga_meeting
+STRUCTURE date
+STRUCTURE year

@@ -1,0 +1,672 @@
+---
+title: "UNGA Workflow"
+author: "Christoph Leonhardt"
+date: "01 06 2018"
+output:
+  pdf_document: default
+  html_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+## 1. Data Collection
+
+The data we want to work with are the verbatim meeting records of the United Nations General Assembly. On http://research.un.org/c.php?g=98268&p=636540 the UN describes the practices and systematics of record keeping in some detail. After technical restrictions of the UN's document database (http://unbisnet.un.org) were handled and most of the verbatim records (about 7000) were downloaded, a qualitative evaluation revealed that the recognition accuracy of the optical character recognition (OCR) of the documents was limited for meeting records from 1993 or before. Hence, we decided to restrict ourselves to the use of documents starting from 1994 (the 49th session). At the point of writing, the most recent document processed is the one of the 79th meeting of the 72nd session (20 March 2018). All in all, at this point we work with 2585 pdf files. 
+
+
+## 2. PDF to txt 
+
+Having a look at these files, we can see that they all share a layout which is somewhat challenging to convert into a text file as it has two columns as well as some - content-wise - irrelevant data in the areas of the header and the footer of the document. In addition, the first page differs from the rest. Here, the trickypdf package of Andreas Blätte offers a solution that can be easily integrated in an R-only workflow and just as easily automated. We start by setting up some directories to store the data and load some libraries we will need along the way.  
+
+```{r preparing_trickypdf}
+library(parallel)
+library(pbapply)
+library(trickypdf)
+
+pdfdir <- "./pdf"
+txtdir <- "./txt"
+xmldir <- "./tei"
+
+pdfFilesToProcess <- Sys.glob(paths = sprintf("%s/*.pdf", pdfdir))
+
+```
+
+Sometimes, protocols do not start or end with speeches but with tables of contents or appendices respectively. For our purpose, this information is irrelevant (however, one certainly could make a case that it is interesting data), so we want to drop pages before the start of the speeches (when the meeting was called) and after the end of the meeting itself (when the meeting rose or was adjourned). We can do this by using some regular expressions that will detect the page on which these events (calling, rising, adjourning) occurred. 
+
+```{r preparing start and end regexes}
+
+regexStartDebate <- "^\\s*The\\s+meetin(a)?g\\s+was\\s+(called|opened)(.*)\\s*$" 
+regexEndDebate <- "^\\s*The\\s*meeting\\s+((was\\s+)?rose|(was\\s+)?adjourned)(.*)\\s*$"
+
+```
+
+Getting these regular expressions to fit for a couple of thousand of documents can be tedious as typos can occur. One document for example had the line "The meetinag was called", so that the Expression accounts for the additional "a" in meeting. 
+
+With that done, we can later drop the pages which are not within that range during the loop. 
+
+There is one last preparatory step we want to do: Assuming that we do not know if all pdf files really are OCRed, we want to build a check for that so that the loop does not crash. We want to record which files were not properly OCRed so that we can double check later and account for the losses. For that, we create an empty data frame which will store the names of the documents which failed the OCR test.
+
+NB: This data frame is not used but pblapply does need to know all the variables in the loop before, otherwise it will crash. Should work around that.
+
+```{r creating the non_ocr data.frame}
+non_ocr <- data.frame() 
+```
+
+# Setting up a loop
+
+As we want to perform the same steps again and again for thousands of documents we want to automate the process using a loop. As a for loop would be rather slow, we use lapply instead and to use the possibilities of parallelization, we use pblapply in particular. To set the loop up, we will need to declare clusters with the CPU cores we do have.
+
+
+```{r declaring clusters}
+no_cores <- detectCores() - 1
+cl <- makeCluster(no_cores, type = "FORK")
+```
+
+Then we create the loop itself. 
+
+```{r loop}
+
+y <- pblapply(pdfFilesToProcess, function(k) {
+# for (k in pdfFilesToProcess) {
+    # trickypdf crashes if a pdf document is not OCRed or - 
+    # for the time being - has only one single page. 
+    # We check for this in the following lines. 
+    # If one of the crash conditions are met, the document name 
+    # and the maximum page number will be stored for propper debugging.
+    
+    x <- Rpoppler::PDF_text(k)
+    A <- Rpoppler::PDF_info(k)
+    
+    if (any(grepl("[AZaz]", x)) == TRUE) {
+      
+      # Later we will need to know the year the meeting occurred.
+      # For that we extract the second and third character of the 
+      # document name.
+      docnummer <- as.integer(substr(basename(k), start = 2, stop = 3))
+      P <- PDF$new(filename_pdf = k) 
+      P$jitter <- 3
+      # We want to use the restore_paragraphs method of frappp,
+      # hence we don't use trickypdf's functionality here
+      P$get_text_from_pages(paragraphs = FALSE) 
+      
+      
+      # We only want to parse the parts of the documents 
+      # containing speech, thus dropping table of content, 
+      # appendices, etc. For this purposes, we look for 
+      # strings signifying the beginning or the end of the 
+      # actual debates, using the regex defined above
+      
+      
+      pageStartDebate <- P$find(regex = regexStartDebate)
+      pageEndDebate <- P$find(regex = regexEndDebate)
+      
+      # Dropping pages will fail if one of the 
+      # pages is out of bounds (i.e. "drop from page 1 to -1"), 
+      # which is why we controll for that via the if-structures
+      # This fails if one of the regexes returns an empty vector.
+      # Thus, we control that, too.
+      
+      if (length(pageEndDebate) != 0 && length(pageStartDebate) != 0) {
+
+      if (pageEndDebate != P$no_pages) {
+        P$drop_page(page = (pageEndDebate + 1):P$no_pages) 
+      } 
+      if (pageStartDebate != P$first) {
+        P$drop_page(page = 1:(pageStartDebate - 1))
+      }
+      }
+      # NB: For the UNGA protocols this is not necessary 
+      # as they all start and end at the very first and 
+      # very last page of each document. 
+      
+      # Next we add the boxes as described in the 
+      # trickypdf vignette. The layout for the UNGA 
+      # protocols changes three times throughout the
+      # years. We check for this using the document name:
+      
+      if (docnummer >= 14 && docnummer <= 17) {
+        
+      P$add_box(box = c(top = 83, height = 613, left = 55, width = 250), page = NULL, replace = TRUE)
+      P$add_box(box = c(top = 83, height = 613, left = 308, width = 250), page = NULL, replace = FALSE)
+      
+      P$add_box(box = c(top = 230, height = 404, left = 55, width = 250), page = 1, replace = TRUE)
+      P$add_box(box = c(top = 230, height = 404, left = 308, width = 250), page = 1, replace = FALSE)
+  
+
+      } else if (docnummer <= 13 && docnummer != 0) {
+        
+      P$add_box(box = c(top = 83, height = 611, left = 55, width = 250), page = NULL, replace = TRUE)
+      P$add_box(box = c(top = 83, height = 611, left = 308, width = 250), page = NULL, replace = FALSE)
+      
+      P$add_box(box = c(top = 240, height = 400, left = 55, width = 250), page = 1, replace = TRUE)
+      P$add_box(box = c(top = 240, height = 400, left = 308, width = 250), page = 1, replace = FALSE)
+        
+        
+      } else {
+        
+      P$add_box(box = c(top = 67, height = 645, left = 55, width = 250), page = NULL, replace = TRUE)
+      P$add_box(box = c(top = 67, height = 645, left = 308, width = 250), page = NULL, replace = FALSE)
+      
+      P$add_box(box = c(top = 250, height = 422, left = 55, width = 250), page = 1, replace = TRUE)
+      P$add_box(box = c(top = 250, height = 422, left = 308, width = 250), page = 1, replace = FALSE)
+        
+      }
+      
+      # The actuall fetching of the text happens in the next step, followed by some cleaning.
+      
+      P$get_text_from_boxes(paragraphs = FALSE)
+      P$purge()
+      
+      # After that, the plaintext can be extracted 
+      # from the pages. 
+      # Then, the name of the txt 
+      # file is generated and saved on the hard drive.
+      
+      plaintext <- unname(unlist(P$pages))
+      
+      txtname <- strsplit(basename(k), '\\.')[[1]][1]
+      write(plaintext, sprintf("%s/%s.txt", txtdir, txtname))
+      
+
+    } else { 
+      
+      non_ocr <- data.frame(name = basename(k), pages = max(A$Pages), stringsAsFactors = FALSE)
+      
+    }
+    
+    return(non_ocr)
+  }, cl = cl)
+  
+  # During the loop we created a list containing data frames,
+  # we now want to bind together.
+  match_table <- do.call(rbind, y)
+  
+stopCluster(cl)
+
+
+```
+
+Converting about 2600 pdf documents into txt this way takes about 30 minutes on an i5 (2,3 GHz) notebook. As it turns out, 22 of the 2585 documents were actually not processable at the time of writing because they were not OCRed. 
+
+
+## 3. TXT to TEI/XML
+
+```{r downloadReport}
+downloadReportUNGA <- read.csv2("./pdf/downloadReportUNGA.csv", stringsAsFactors = FALSE)
+```
+
+
+```{r load_more_packages}
+library(frappp)
+library(R6)
+```
+
+
+```{r}
+VerbatimRecordUNGA <- R6Class(
+  
+  "VerbatimRecordUNGA",
+  inherit = PlenaryProtocolParser,
+  
+  public = list(
+    
+    initialize = function(){
+      
+      self$xpath = teiXpath
+
+      
+      self$speaker_regex <- list(
+        
+        pres = list(
+          regex = "^(The\\s+(?:Acting\\s+)?President)(?:\\s*\\((.+)\\))?:\\s*(.+)$",
+          fn = function(df){
+            data.frame(
+              who = df[,2],
+              state = "NA",
+              role = "presidency",
+              position = "presidency",
+              text = df[,4],
+              stringsAsFactors = FALSE
+            )
+          }
+        ),
+        
+        sg = list(
+          regex = "^(The\\s+(?:Deputy\\s+)?Secretary-General):\\s*(.+)$",
+          fn = function(df){
+            data.frame(
+              who = df[,2],
+              state = "NA",
+              role = "secretary-general",
+              position = "secretary-general",
+              text = df[,3],
+              stringsAsFactors = FALSE
+            )
+          }
+        ),
+        
+        headofstate = list(
+          regex = "^(?<!(?:of|[Aa]s))(Mr\\.|Mrs\\.|Ms\\.|President|King(?!dom)|.*Grand\\s+Duke|Prince|Sheikh|Shaikh|Pope)\\s*(?:a|'||b|’|‘)?\\s*([A-ZŽŞŚŚİÏÐÇČÁÄÖÜ](?:[^\\s:]|\\s(?=[A-Z]))+)(?=[\\s]*[(:])(?:\\s\\(spoke[^:]+)?:\\s*([^“]+)$",
+          fn = function(df){
+            data.frame(
+              who = df[,3],
+              state = df[,4],
+              role = "head of state",
+              position = df[,2],
+              text = df[,5],
+              stringsAsFactors = FALSE
+            )
+          }
+        ),
+        
+        pm_del_rep_for = list(
+          regex = "^(M[rs]\\.|Mrs\\.|Shaikh|Sir\\s+|Archbishop|Sheikh|Chief)\\s*(?:a|'||b|’|‘)?\\s*([A-ZŽŞŚŚİÏÐÇČÁÄÖÜ](?:[^\\s:]|\\s(?=[A-Z]))+)(?=[\\s]*[(:])\\s+(?:\\(([^spoke].*?)\\))?(?:\\s*\\((?:spoke\\s+in|interpretation\\s+from)\\s+.*\\))?:\\s*(.*)$",
+          fn = function(df){
+            data.frame(
+              who = df[,3],
+              state = df[,4],
+              role = "representative, delegate, prime minister or foreign affairs, or special",
+              position = df[,2],
+              text = df[,5],
+              stringsAsFactors = FALSE
+            )
+          }
+        ),
+        
+        misc = list(
+          regex = "^(Co-Chair)\\s*(.*):\\s+(.*)$",
+          fn = function(df){
+            data.frame(
+              who = df[,3],
+              state = "NA",
+              role = "misc",
+              position = df[,2],
+              text = df[,4], 
+              stringsAsFactors = FALSE
+            )
+          }
+        ),
+        
+        rapporteur = list(
+          regex = "^(Ms\\.|Mr\\.|Mrs\\.)\\s*(.*)\\s+\\((.*?)\\),\\s+(Rapporteur).*:\\s*(.*)$",
+          fn = function(df){
+            data.frame(
+              who = df[,3],
+              state = df[,4],
+              role = df[,2],
+              position = "Rapporteur",
+              text = df[,6], 
+              stringsAsFactors = FALSE
+            )
+          }
+        ),
+      
+          temp_pres = list(
+          regex = "^\\d*\\.*\\s*(The\\s*temporary\\s+president):\\s+(.*)$",
+          fn = function(df){
+            data.frame(
+              who = df[,2],
+              state = "NA",
+              role = "presidency",
+              position = "presidency",
+              text = df[,3], 
+              stringsAsFactors = FALSE
+            )
+          }
+        ), 
+        
+            named_co_chair = list(
+          regex = "^The\\s*Co-Chair\\s*\\((.*?)\\)(?:\\s*\\(.*?\\))?:\\s*(.*)$",
+          fn = function(df){
+            data.frame(
+              who = df[,2],
+              state = "NA",
+              role = "co_chair",
+              position = "co_chair",
+              text = df[,3], 
+              stringsAsFactors = FALSE
+            )
+          }
+        ), 
+                  # The Co-Chair (Mr. Treki) (spoke in Arabic):
+
+   
+           co_chair = list(
+          regex = "^(The\\s+Co-Chairperson)\\s*\\((.*)\\)\\s*:\\s*(.*)$",
+          fn = function(df){
+            data.frame(
+              who = df[,2],
+              state = df[,3],
+              role = "misc",
+              position = "Co-Chairperson",
+              text = df[,4], 
+              stringsAsFactors = FALSE
+            )
+          }
+        )
+
+      )
+      
+      self$speaker_mismatch <- character()
+      
+      ####### Mismatches
+      
+    self$agenda_item_regex <- c(address = "^\\s*(Agenda\\s+item\\s+\\d+?\\s+)?Address\\s+by\\s+(.*)$", 
+                                  statement = "^\\s*Statement\\s+of\\s+the\\s+President.*$",
+                                  continued_item = "\\s*Agenda\\s+item\\s+\\d+?\\s+\\(continued\\).*$",
+                                  #right_of_reply = "right\\s+of\\s+reply",
+                                  general_debate = "^\\s*General\\s+Debate\\s*$",
+                                  report = "\\s+Report(s)?\\s+of\\s+the\\s+(.*)Committee.*$",
+                                  elections = "\\s*Elections\\s+to\\fill\\s+vacancies.*", 
+                                  agenda_item_continued = "^Agenda\\s+item\\s+\\d+\\s+\\(continued\\)\\s*$", 
+                                  agenda_item_No = "Agenda\\s*item\\s+\\d+\\s*$"
+      )
+      
+      self$agenda_item_types <- c(address = "address",
+                                  statement = "statement",
+                                  continued_item = "Continued",
+                                  #right_of_reply = "right of reply",
+                                  general_debate = "general debate",
+                                  report = "report", 
+                                  elections = "elections", 
+                                  agenda_item_continued = "Agenda item (continued)",
+                                  agenda_item_No = "Agenda Item"
+      )
+      
+      self$stage_regex <- c(
+        end_of_meeting = "^\\s*The\\s+meeting\\s+rose\\s+at\\s+\\d+(\\.\\d+)?\\s[ap]\\.m\\.\\s*$",
+        entering_or_leaving = "^\\s*(His|President|Mr\\.|Ms\\.|Mrs\\.|Sir|Sheikh|Archbishop|Shaikh|Lord|Chief|Pope|The\\s*Honourable)(.*)was\\s+escorted\\s+(to|into|from)\\s+the\\s+(.*)\\.",
+        change_of_presidency = "^\\s*(Ms|Mr|Mrs|The\\s+President)\\.?(.*)?(Vice-President|President)?,?\\s+took\\s+the\\s+Chair.\\s*$",
+        language_change = "^\\(spoke\\s+.*\\)$",
+        decision = "^\\s*It\\s+was\\s+so\\s+decided\\.$",
+        returned_to_chair = "^.*returned\\s+to\\s+the\\s+Chair\\.$",
+        ceremonial = "^\\s*The\\s+members\\s+of\\s+the\\s+General\\s+Assembly\\s+observed\\s+a\\s+minute\\s+of\\s+silence.*$",
+        draft_decision = "^s*The\\s+draft\\s+decision\\s+was\\s+adopted\\.s*$",
+        draft_resolution = "(The\\s+)?[Dd]raft\\s+resolution\\s+((I|II|III|IV)\\s+)?was\\s+adopted\\s*(\\(resolution\\s+\\d*/\\d*\\))?.*?$",
+        suspension_of_meeting = "^\\s*The\\s+meeting\\s+was\\s+suspended\\s+at\\s+\\d{1,2}(\\.\\d{1,2})?\\s+(a\\.m\\.|p\\.m\\.)\\s+and\\s+resumed\\s+at\\s+(\\.\\d{1,2})?\\s+(a\\.m\\.|p\\.m\\.)\\s*$", 
+        vote_taken <- "^\\s*A\\s*vote\\s*was\\s*taken\\s*(by\\s*secret\\s*ballot)?\\s*\\.\\s*$"
+      )
+      
+      invisible(self)
+    },
+    
+    
+    get_metadata = function(filename){
+      pdffile = file.path(pdfdir, gsub("^(.*?)\\.txt$", "\\1.pdf", basename(filename)))
+      pdfdoc <- pdftools::pdf_text(pdf = pdffile)
+      page1 <- strsplit(pdfdoc, "\n")[[1]]
+      
+      # get session
+      docIdRegex <- "^.*?\\s*(A)\\s*/(\\d+)/\\s*(PV\\.\\d+).*?$"
+      session <- do.call(rbind, gsubfn::strapplyc(X = page1, pattern = docIdRegex))[1,2]
+      
+      # get date
+      weekdays = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+      months = c(
+        January = 1, February = 2, March = 3, April = 4, May = 5, June = 6,
+        July = 7, August = 8, September = 9, October = 10, November = 11, Novembe = 11, December = 12
+      )
+      dateRegex <- sprintf(
+        "^.*(%s)\\s*,?\\s*(\\d{1,2})\\s+(%s)(\\s+\\d{4})?,*.*$",
+        paste0(weekdays, collapse = "|"),
+        paste0(names(months), collapse = "|")
+      )
+      
+
+      dateMatch <- do.call(rbind, gsubfn::strapplyc(page1, pattern = dateRegex))
+      year <- dateMatch[1,4]
+      month <- as.integer(months[dateMatch[1,3]])
+      day <- as.integer(dateMatch[1,2])
+      if (!year == "") {
+      dateOfMeeting <- sprintf("%s-%02d-%02d", year, month, day)
+      } else {dateOfMeeting <- "NA"}
+      
+      # get meeting
+      meeting <- do.call(rbind, gsubfn::strapplyc(page1, pattern = docIdRegex))[1,3]
+      meeting <- strsplit(meeting, "\\.")[[1]][2]
+      
+      list(
+        legislativePeriod = as.integer(session),
+        sessionNo = as.integer(meeting),
+        date = if (dateOfMeeting != "NA") as.Date(dateOfMeeting) else "NA", 
+        retrievalDate = if (any(downloadReportUNGA$filename == basename(pdffile))) downloadReportUNGA$date[downloadReportUNGA$filename == basename(pdffile)] else retrievalDate = "NA",
+        filetype = "pdf",
+        url = if (any(downloadReportUNGA$filename == basename(pdffile))) downloadReportUNGA$url[downloadReportUNGA$filename == basename(pdffile)] else url = "NA",
+        publisher = "United Nations",
+        title = "Verbatim Records of the United Nations"
+      )
+    },
+    
+    xmlify = function(id, txtfile, pdffile, xmlfile, verbose = TRUE){
+      if (verbose) message("... getting metadata")
+      metadata <- self$get_metadata(pdffile)
+      if (verbose) message("... reading plain text file: ", txtfile)
+      self$read_file(filename = txtfile, id = id)
+      if (verbose) message("... adding metadata that has been extracted")
+      self$add_metadata(metadata = metadata)
+      if (verbose) message("... making header")
+      self$make_header()
+      if (verbose) message("... pre-processing plain text")
+      self$preprocessing()
+      if (verbose) message("... splitting up by speakers")
+      self$split_by_speakers()
+      if (verbose) message("... detecting stage instructions ")
+      self$detect_stage_regex_matches()
+      if (verbose) message("... reconstructing paragraphs")
+      self$reconstruct_paragraphs()
+      if (verbose) message("... gathering additional speaker data")
+      self$get_additional_speaker_data()
+      if (verbose) message("... making body")
+      self$make_body()
+      if (verbose) message("... saving TEI document to file: ", xmlfile)
+      self$save_xml(filename = xmlfile)
+      invisible(self$xml)
+    }
+  )
+)
+```
+
+
+```{r set_new_method, message = FALSE}
+
+VerbatimRecordUNGA$set("public", "get_additional_speaker_data", function() {
+  for (i in 1:length(self$chunk_data$role)) {
+
+    if (self$chunk_data[i,]$regex == "pm_del_rep_for") {
+      name <- self$chunk_data[i,]$who
+      if (i >= 2 && self$chunk_data[i-1,]$regex == "pres" && grepl(name, self$chunk_data[i-1,]$text)) {
+        desired <- unlist(self$chunks[i-1])
+        regex <- paste0("(.*)", name, "\\,\\s+(.*?)\\s+of(.*)")
+        self$chunk_data[i,]$role <- sub(regex, "\\2", desired)[1]
+        if (grepl("Prime\\s+Minister", self$chunk_data[i,]$role)) {
+          self$chunk_data[i,]$position <- "Prime Minister"
+        } else {
+          if (grepl("(?<!Prime )\\s*Minister|Secretary", self$chunk_data[i,]$role, perl = TRUE)) {
+            self$chunk_data[i,]$position <- "Minister"
+          } else {
+            if (grepl("Vice-President", self$chunk_data[i,]$role, perl = TRUE)) {
+              self$chunk_data[i,]$position <- "Vice-President"
+            } else {
+              self$chunk_data[i,]$position <- "Delegate"
+            }
+          }
+        }
+      } else {
+        self$chunk_data[i,]$role <- "Delegate or Representative"
+        self$chunk_data[i,]$position <- "NA"
+      }
+    }
+
+    if (self$chunk_data[i,]$regex == "headofstate") {
+      regex2 <- ".*(President|King|.*Grand\\s+Duke|Emir|Head\\s+of\\s+State|Mr\\.|Amir|Prime\\s*Minister|Commander-in-Chief\\s*of\\s*the\\s*Armed\\s*Forces|of\\s*the\\s*Government|Pope|Highness)\\s+of(?:\\s+the)?\\s+(.*?)(?:\\.|\\,|\\s*and\\s*(to|Commander)|and\\s+(co-)?Chair|\\,\\s*His).*$"
+      desired2 <- unlist(self$chunks[i-1])
+      desired2 <- sub(regex2, "\\2", desired2)[1]
+      self$chunk_data[i,]$state <- sub(regex2, "\\2", desired2)[1]
+
+    }
+
+    if (grepl ("last\\s+speaker|right\\s+of\\s+reply", self$chunk_data[i,]$role, perl = TRUE)) {
+      self$chunk_data[i,]$role <- "representative, delegate, prime minister or foreign affairs, or special"
+    }
+
+    if (grepl ("The\\s+(Acting\\s+)?President:", self$chunk_data[i,]$role, perl = TRUE)) {
+      self$chunk_data[i,]$role <- "NA"
+    }
+        if (grepl ("Co-Chairperson", self$chunk_data[i,]$state, perl = TRUE)) {
+      self$chunk_data[i,]$state <- "NA"
+        }
+    
+         if (grepl ("(will\\s*be|\\s*President\\s+(?!of)|spoke\\s*in|\\s+on\\s+|Assembly|Co-Chair|The\\s+(Acting\\s+)?President|interpretation)", self$chunk_data[i,]$state, perl = TRUE)) {
+      self$chunk_data[i,]$state <- "NA"
+         }
+    
+
+      if (grepl ("(will\\s*be|President|spoke\\s*in|The\\s*Acting\\s*President)", self$chunk_data[i,]$position, perl = TRUE)) {
+        self$chunk_data[i,]$position <- "NA"
+        }
+    
+      if (grepl ("\\)", self$chunk_data[i,]$state, perl = TRUE)) {
+          self$chunk_data[i,]$state <- strsplit(self$chunk_data[i,]$state, "\\)")[[1]][1]
+          }
+    
+        if (grepl ("\\.", self$chunk_data[i,]$state, perl = TRUE)) {
+          self$chunk_data[i,]$state <- strsplit(self$chunk_data[i,]$state, "\\.")[[1]][1]
+            }
+
+  }
+}
+)
+```
+
+
+
+```{r processing_multiple_docs, message = FALSE}
+txtFilesToProcess <- Sys.glob(paths = sprintf("%s/*.txt", txtdir))
+PPP <- VerbatimRecordUNGA$new()
+PPP$stage_match_n_lines <- 4L
+PPP$speaker_match_n_lines <- 4L
+
+cl <- makeCluster(4L, type = "FORK")
+
+pblapply(
+  txtFilesToProcess,
+  function(txtfile){
+    PPP$xmlify(
+      id = basename(txtfile),
+      txtfile = txtfile,
+      pdffile = file.path(pdfdir, gsub("^(.*?)\\.txt$", "\\1.pdf", basename(txtfile))),
+      xmlfile = file.path(xmldir, gsub("^(.*?)\\.txt$", "\\1.xml", basename(txtfile)))
+    )
+    return(TRUE)
+ }, cl = cl)
+ 
+ stopCluster(cl)
+
+
+```
+
+## 5. TEI to CWB
+
+After that, we can build the CWB corpus from the TEIs. This uses the cwbtools package and thus follows its vignette closely. 
+
+Update 2019-03-12: We don't use this workflow anymore. See instead 2019_01_23_UNGA_tei_to_cwb.Rmd. Keeping the chunks below for documentation.
+
+```{r}
+tmpdir <- "~/lab/gitlab/_UNGA/data-raw/cwb"
+if (.Platform$OS.type == "windows") tmpdir <- normalizePath(tmpdir, winslash = "/")
+registry_tmp <- file.path(tmpdir, "registry")
+data_dir_tmp <- file.path(tmpdir, "data_dir")
+if (!file.exists(registry_tmp)){
+  dir.create (registry_tmp)
+} else {
+  file.remove(list.files(registry_tmp, full.names = TRUE))
+}
+if (!file.exists(data_dir_tmp)) dir.create(data_dir_tmp)
+```
+
+```{r}
+library(cwbtools)
+library(data.table)
+```
+
+```{r}
+teidir <- "./tei/"
+teifiles <- Sys.glob(paths = sprintf("%s/*.xml", teidir))
+```
+
+```{r unga_instantiate_cd}
+unga_data_dir_tmp <- file.path(data_dir_tmp, "unga")
+unga_registry_dir <- file.path(registry_tmp, "unga")
+if (!file.exists(unga_data_dir_tmp)) dir.create(unga_data_dir_tmp)
+file.remove(list.files(unga_data_dir_tmp, full.names = TRUE))
+if (file.exists(unga_registry_dir)) file.remove(unga_registry_dir)
+UNGA <- CorpusData$new()
+UNGA
+```
+
+```{r basetable, eval = TRUE}
+metadata <- c(
+  lp = "//legislativePeriod", session = "//titleStmt/sessionNo",
+  date = "//publicationStmt/date", url = "//sourceDesc/url",
+  src = "//sourceDesc/filetype"
+)
+UNGA$import_xml(filenames = teifiles, meta = metadata)
+UNGA
+```
+
+```{r cleaning, eval = TRUE}
+to_keep <- which(is.na(UNGA$metadata[["speaker"]]))
+UNGA$chunktable <- UNGA$chunktable[to_keep]
+UNGA$metadata <- UNGA$metadata[to_keep][, speaker := NULL]
+```
+
+```{r}
+setnames(UNGA$metadata, old = c("sp_who", "sp_state", "sp_role"), new = c("who", "state", "role"))
+```
+
+```{r dissect, eval = TRUE}
+UNGA$tokenize()
+UNGA
+```
+
+```{r}
+s_attrs <- c("id", "who", "state", "role", "lp", "session", "date")
+UNGA$encode(
+  registry_dir = registry_tmp, data_dir = unga_data_dir_tmp,
+  corpus = "UNGA", encoding = "utf8", method = "R",
+  p_attributes = "word", s_attributes = character(),
+  compress = TRUE
+  )
+```
+
+The last chunk creates the actuall corpus files which will be stored in the directory defined above as "data_dir". 
+
+```{r}
+library(RcppCWB)
+id_peace <- cl_str2id(corpus = "UNGA", p_attribute = "word", str = "peace", registry = registry_tmp)
+cpos_peace <- cl_id2cpos(corpus = "UNGA", p_attribute = "word", id = id_peace, registry = registry_tmp)
+
+tab <- data.frame(
+  i = unlist(lapply(1:length(cpos_peace), function(x) rep(x, times = 11))),
+  cpos = unlist(lapply(cpos_peace, function(x) (x - 5):(x + 5)))
+  )
+tab[["id"]] <- cl_cpos2id(corpus = "UNGA", p_attribute = "word", cpos = tab[["cpos"]], registry = registry_tmp)
+tab[["str"]] <- cl_id2str(corpus = "UNGA", p_attribute = "word", id = tab[["id"]], registry = registry_tmp)
+
+peace_context <- split(tab[["str"]], as.factor(tab[["i"]]))
+peace_context <- unname(sapply(peace_context, function(x) paste(x, collapse = " ")))
+head(peace_context)
+```
+
+```{r}
+y <- "~/lab/gitlab/_UNGA/data-raw/unga_pkg"
+pkg_create_cwb_dirs(pkg = y)
+pkg_add_description(pkg = y, package = "unga", description = "Meeting Records of the United Nations General Assembly from 1994 to 2018")
+pkg_add_corpus(
+    pkg = y, corpus = "UNGA",
+    registry = "~/lab/gitlab/_UNGA/data-raw/cwb/registry"
+)
+pkg_add_gitattributes_file(pkg = y)
+pkg_add_configure_scripts(pkg = y)
+pkg_add_creativecommons_license(pkg = y)
+```

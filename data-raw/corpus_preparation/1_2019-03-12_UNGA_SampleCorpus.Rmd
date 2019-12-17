@@ -1,0 +1,108 @@
+---
+title: "UNGA 03a - Creation of a Sample Corpus"
+author: "Christoph Leonhardt"
+date: "12 March 2019"
+output: html_document
+---
+
+## Prep
+
+```{r setup}
+library(polmineR)
+use("UNGA")
+corpus_new <- "UNGAMINI"
+
+s_attrs <- s_attributes("UNGA")
+
+p_attrs <- p_attributes("UNGA")
+
+registry <- Sys.getenv("CORPUS_REGISTRY")
+if (!file.exists(registry)) stop("environment variable CORPUS_REGISTRY needs to be defined")
+stateparl_registry_file <- file.path(registry, tolower(corpus_new))
+if (file.exists(stateparl_registry_file)) file.remove(stateparl_registry_file)
+
+data_dir <- file.path(dirname(registry), "indexed_corpora")
+if (!file.exists(data_dir)) dir.create(data_dir)
+stateparl_data_dir <- file.path(data_dir, tolower(corpus_new))
+if (!file.exists(stateparl_data_dir)) dir.create(stateparl_data_dir)
+file.remove(list.files(stateparl_data_dir, full.names = TRUE))
+
+```
+
+
+
+## Sampling
+
+Using the entire UNGA corpus (see 1_2019_01_23_UNGA_tei_to_cwb.Rmd), we create a sample corpus (UNGAMINI) to demonstrate some features.
+
+```{r}
+library(data.table)
+library(cwbtools)
+```
+
+Let's assume that 0.5% of UNGA's volume would be appropriate both as an illustrative sample and in terms of file size in an R package which shouldn't exceed 5mb. We want to draw a random sample from the days UNGA covers.
+
+```{r}
+size("UNGA") # UNGA comprises 40 million tokens
+
+no_of_days_to_sample <- round(length(s_attributes("UNGA", "date"))/200)
+set.seed(111)
+random_days <- sample(s_attributes("UNGA", "date"), size = no_of_days_to_sample)
+```
+
+Next, we want to build a partition which contains the random days from above.
+
+```{r}
+date_regex <- paste0(random_days, collapse = "|")
+sample_partition <- partition("UNGA", date = date_regex, regex = TRUE) 
+size(sample_partition) # 330000 tokens
+size(sample_partition)/size("UNGA")*100
+```
+
+## Decoding
+
+```{r}
+
+s_attribute_dt <- polmineR::decode(sample_partition)
+s_attribute_dt[, cpos :=  as.character(as.integer(factor(cpos)) - 1)][, struc :=  as.character(as.integer(factor(struc)) - 1)]
+tokenstream_dt <- copy(s_attribute_dt)
+tokenstream_dt <- tokenstream_dt[, c("word", "pos", "lemma", "ner", "id", "cpos")]
+
+s_attribute_dt[, c("word", "lemma", "pos", "ner") := NULL]
+s_attribute_dt <- s_attribute_dt[,{list(cpos_left = min(as.integer(.SD[["cpos"]])), cpos_right = max(as.integer(.SD[["cpos"]])), 
+                                    id = unique(.SD[["id"]]),
+                                    speaker = unique(.SD[["speaker"]]),
+                                    state_organization = unique(.SD[["state_organization"]]),
+                                    role = unique(.SD[["role"]]),
+                                    unga_session = unique(.SD[["unga_session"]]),
+                                    unga_meeting = unique(.SD[["unga_meeting"]]),
+                                    date = unique(.SD[["date"]]),
+                                    year = unique(.SD[["year"]])
+                                    )}, by = "struc"]
+
+```
+
+## Corpus Encode
+
+```{r}
+CD <- CorpusData$new()
+CD$tokenstream <- tokenstream_dt
+CD$metadata <- s_attribute_dt
+CD$metadata$lp <- as.character(CD$metadata$lp)
+CD$metadata$session <- as.character(CD$metadata$session)
+CD$metadata$year <- as.character(CD$metadata$year)
+
+message("... start encoding")
+
+CD$encode(
+  registry_dir = registry, data_dir = stateparl_data_dir,
+  corpus = toupper(corpus_new), encoding = "utf8", method = "R",
+  p_attributes = p_attrs, s_attributes = s_attrs,
+  compress = TRUE
+)
+
+message("... save tar.gz")
+
+cwbtools::corpus_as_tarball(corpus=corpus_new, registry_dir = Sys.getenv('CORPUS_REGISTRY'), tarfile='~/lab/tmp/ungamini.tar.gz')
+
+```
