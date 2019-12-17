@@ -62,11 +62,70 @@
 
       </header><div class="row">
   <div class="contents col-md-9">
-<div id="the-protocols-of-the-un-general-assembly-an-r-data-package" class="section level1">
+
+
+<div id="un-general-assembly-corpus" class="section level1">
 <div class="page-header"><h1 class="hasAnchor">
-<a href="#the-protocols-of-the-un-general-assembly-an-r-data-package" class="anchor"></a>The Protocols of the UN General Assembly: An R Data Package</h1></div>
-<p>The package includes a small sample corpus. The large, indexed corpus can be loaded from a webserver of the University of Duisburg-Essen.</p>
+<a href="#un-general-assembly-corpus" class="anchor"></a>UN General Assembly Corpus</h1></div>
+<div id="about" class="section level2">
+<h2 class="hasAnchor">
+<a href="#about" class="anchor"></a>About</h2>
+<p>The United Nations offer pdf documents of the verbatim records of the <a href="https://www.un.org/en/ga/">United Nations General Assembly (UNGA)</a>. Based on a machine-readable XML version of the documents prepared in the PolMine Project, a linguistically annotated version of the corpus has been imported into the Corpus Worbench (CWB). The R Data Package ‘UNGA’ offers a convenient mechanism to download the full UNGA corpus. It has been developed primarily to be used in combination with the polmineR package which offers a basic vocabulary to work with large linguistically annotated corpora.</p>
+<p>Note that the R package includes only a small sample corpus. The primary functionality of the package is to download the full corpus from an online storage place (amazon S3). The data will be stored within the directory structure of the package.</p>
 </div>
+<div id="installation" class="section level2">
+<h2 class="hasAnchor">
+<a href="#installation" class="anchor"></a>Installation</h2>
+<p>The easiest way to install the <em>UNGA</em> package is to install it from the <a href="https://CRAN.R-project.org/package=drat">drat</a>-repository of the <a href="http://www.polmine.de">PolMine Project</a>.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><a class="sourceLine" id="cb1-1" title="1"><span class="kw"><a href="https://rdrr.io/r/utils/install.packages.html">install.packages</a></span>(<span class="st">"UNGA"</span>, <span class="dt">repos =</span> <span class="st">"https://polmine.github.io/drat"</span>)</a></code></pre></div>
+<p>The package includes only a installer function <code><a href="reference/install_unga.html">unga_download_corpus()</a></code> that will download the UNGA corpus from the instance where it is stored (amazon S3).</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><a class="sourceLine" id="cb2-1" title="1">UNGA<span class="op">::</span><span class="kw"><a href="https://rdrr.io/pkg/UNGA/man/install_unga.html">unga_download_corpus</a></span>()</a></code></pre></div>
+<p>Note that the size of the tarball with the corpus that is amounts to about 500 MB. Take care that your internet is sufficiently robust and fast. The indexed corpus will be stored in a subdirectory of the package (./extdata/cwb/).</p>
+</div>
+<div id="usage" class="section level2">
+<h2 class="hasAnchor">
+<a href="#usage" class="anchor"></a>Usage</h2>
+<p>The idea to use R packages for shipping corpora has been developed in the context of the PolMine Project (Blätte 2018). The most convenient way to use the data will be to use the <a href="https://CRAN.R-project.org/package=polmineR">polmineR</a> package. To be able to access that data within the package, call the <code><a href="https://rdrr.io/pkg/polmineR/man/use.html">use()</a></code>-function.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><a class="sourceLine" id="cb3-1" title="1"><span class="cf">if</span> (<span class="op">!</span><span class="st">"polmineR"</span> <span class="op">%in%</span><span class="st"> </span><span class="kw"><a href="https://rdrr.io/r/base/colnames.html">rownames</a></span>(<span class="kw"><a href="https://rdrr.io/r/utils/installed.packages.html">installed.packages</a></span>())) <span class="kw"><a href="https://rdrr.io/r/utils/install.packages.html">install.packages</a></span>(<span class="st">"polmineR"</span>)</a>
+<a class="sourceLine" id="cb3-2" title="2"><span class="kw"><a href="https://rdrr.io/r/base/library.html">library</a></span>(polmineR)</a>
+<a class="sourceLine" id="cb3-3" title="3"><span class="kw"><a href="https://rdrr.io/pkg/polmineR/man/use.html">use</a></span>(<span class="st">"UNGA"</span>)</a></code></pre></div>
+<p>If the corpora have been downloaded, you should see something like this.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode R"><code class="sourceCode r"><a class="sourceLine" id="cb4-1" title="1"><span class="co">## ... activating corpus: UNGA</span></a>
+<a class="sourceLine" id="cb4-2" title="2"></a>
+<a class="sourceLine" id="cb4-3" title="3"><span class="co">## ... activating corpus: UNGAMINI</span></a></code></pre></div>
+<p>The polmineR package offers a basic vocabulary for corpus analysis (counting, keyword-in-context analysis, cooccurrences, keyword extraction etc.). To learn more about the polmineR package, consult the <a href="http://polmine.github.io/polmineR/">package documentation</a>.</p>
+<p>Just to check that polmineR works, you might want to perform a simple counting operation, such as counting the number of occurrences of “sustainable development” using the syntax of the Corpus Query Processor (CQP).</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><a class="sourceLine" id="cb5-1" title="1"><span class="kw"><a href="https://rdrr.io/pkg/polmineR/man/count-method.html">count</a></span>(<span class="st">"UNGA"</span>, <span class="dt">query =</span> <span class="st">'"sustainable" "development" %c'</span>, <span class="dt">cqp =</span> <span class="ot">TRUE</span>)</a></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode R"><code class="sourceCode r"><a class="sourceLine" id="cb6-1" title="1"><span class="co">##                             query count         freq</span></a>
+<a class="sourceLine" id="cb6-2" title="2"><span class="co">## 1: "sustainable" "development" %c 12575 0.0002918888</span></a></code></pre></div>
+</div>
+<div id="disclaimer" class="section level2">
+<h2 class="hasAnchor">
+<a href="#disclaimer" class="anchor"></a>Disclaimer</h2>
+<p>The UNGA corpus has been prepared to serve as test data for the polmineR package: A corpus of the UN General Assembly is most international test resource that occurred to us. The language resource has not yet gone through extensive quality checks! Data quality should be sufficient for text mining exercises, but further improvements may be necessary to develop the corpus into a trustworthy research resource for research on international relations (IR) and international organizations.</p>
+<p>If you have feedback on the data, please use the issue tracker of this repository!</p>
+<p>It is our understanding that in line with the Freedom of Information, a principle firmly established in the UN system, the verbatim records of the UN General Assembly are in the public domain. Please note, however, that the legal status of the UNGA corpus is not yet defined.</p>
+</div>
+<div id="references" class="section level2">
+<h2 class="hasAnchor">
+<a href="#references" class="anchor"></a>References</h2>
+<div id="refs" class="references">
+
+<div id="ref-blaette2018">
+
+Blätte, Andreas. 2018. “Using Data Packages to Ship Annotated Corpora of
+Parliamentary Protocols: The Germaparl R Package.” In *Proceedings of
+the Eleventh International Conference on Language Resources and
+Evaluation (Lrec 2018)*, edited by Darja Fišer, Maria Eskevich, and
+Franciska de Jong. Paris, France: European Language Resources
+Association (ELRA).
+
+</div>
+
+</div>
+</div>
+</div>
+
   </div>
 
   <div class="col-md-3 hidden-xs hidden-sm" id="sidebar">
@@ -91,7 +150,15 @@
 </ul>
 </div>
 
-  </div>
+  <div class="dev-status">
+<h2>Dev status</h2>
+<ul class="list-unstyled">
+<li><a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a></li>
+<li><a href="https://travis-ci.org/PolMine/unga"><img src="https://api.travis-ci.org/PolMine/unga.svg?branch=master" alt="Travis-CI Build Status"></a></li>
+<li><a href="https://ci.appveyor.com/project/PolMine/unga"><img src="https://ci.appveyor.com/api/projects/status/github/PolMine/unga?branch=master&amp;svg=true" alt="AppVeyor Build Status"></a></li>
+</ul>
+</div>
+</div>
 </div>
 
 
