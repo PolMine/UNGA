@@ -5,6 +5,7 @@ UNGA 0.2.0
   from the top level of the package - not needed any more as a result of 
   polmineR's usage of a temporary registry directory.
 - Added site generated using `pkgdown::build_site()`. 
+- Added continuous integration (Travis CI, appveyor).
 
 
 UNGA 0.1.2

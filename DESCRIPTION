@@ -1,8 +1,8 @@
 Package: UNGA
 Type: Package
 Title: United Nations General Assembly Corpus
-Version: 0.1.2
-Date: 2019-09-28
+Version: 0.2.0
+Date: 2019-12-17
 Authors@R: c(person("Andreas", "Blaette", role = c("aut", "cre"), email = "andreas.blaette@uni-due.de"),
            person("Christoph", "Leonhardt", role = "aut"))
 Description: Data package with the United Nations General Assembly corpus preprared in the PolMine Project.
@@ -17,8 +17,10 @@ Suggests:
   SnowballC
 LazyData: yes
 Encoding: UTF-8
-License: CC BY-NC-SA 4.0
+License: GPL-3
 VignetteBuilder: knitr
+URL: https://www.github.com/PolMine/UNGA
+BugReports: https://github.com/PolMine/UNGA/issues
 Collate:
   'UNGA.R'
   'download.R'

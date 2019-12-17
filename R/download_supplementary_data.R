@@ -49,9 +49,11 @@ unga_download_lda_model <- function(
 #' @rdname supplementary_data
 unga_download_global_vectors <- function(
   model = NULL,
-  webdir = "https://polmine.sowi.uni-due.de/corpora/cwb/unga/supplementary_data/global_vectors", 
+  webdir, 
   verbose = TRUE
 ){
+  
+  if (missing(webdir)) webdir <- "https://polmine.sowi.uni-due.de/corpora/cwb/unga/supplementary_data/global_vectors"
   
   model_dir <- system.file(package = "UNGA", "extdata", "global_vectors")
   if (!dir.exists(model_dir)) dir.create(model_dir)

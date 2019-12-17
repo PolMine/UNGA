@@ -10,9 +10,7 @@
   webdir = "https://polmine.s3.eu-central-1.amazonaws.com/corpora/cwb/unga",
   verbose = TRUE)
 
-unga_download_global_vectors(model = NULL,
-  webdir = "https://polmine.sowi.uni-due.de/corpora/cwb/unga/supplementary_data/global_vectors",
-  verbose = TRUE)
+unga_download_global_vectors(model = NULL, webdir, verbose = TRUE)
 }
 \arguments{
 \item{model}{Name of the model.}
